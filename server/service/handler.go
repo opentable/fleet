@@ -65,11 +65,6 @@ type KolideEndpoints struct {
 	ApplyPackSpecs                        endpoint.Endpoint
 	GetPackSpecs                          endpoint.Endpoint
 	GetPackSpec                           endpoint.Endpoint
-	EnrollAgent                           endpoint.Endpoint
-	GetClientConfig                       endpoint.Endpoint
-	GetDistributedQueries                 endpoint.Endpoint
-	SubmitDistributedQueryResults         endpoint.Endpoint
-	SubmitLogs                            endpoint.Endpoint
 	CreateLabel                           endpoint.Endpoint
 	ModifyLabel                           endpoint.Endpoint
 	GetLabel                              endpoint.Endpoint
@@ -96,6 +91,15 @@ type KolideEndpoints struct {
 	SSOSettings                           endpoint.Endpoint
 	GetFIM                                endpoint.Endpoint
 	ModifyFIM                             endpoint.Endpoint
+}
+
+//Osquery endpoints
+type OsqueryEndpoints struct {
+	EnrollAgent                           endpoint.Endpoint
+  GetClientConfig                       endpoint.Endpoint
+	GetDistributedQueries                 endpoint.Endpoint
+	SubmitDistributedQueryResults         endpoint.Endpoint
+	SubmitLogs                            endpoint.Endpoint
 }
 
 // MakeKolideServerEndpoints creates the Kolide API endpoints.
@@ -188,8 +192,15 @@ func MakeKolideServerEndpoints(svc kolide.Service, jwtKey string) KolideEndpoint
 		GetFIM:                                authenticatedUser(jwtKey, svc, makeGetFIMEndpoint(svc)),
 		ModifyFIM:                             authenticatedUser(jwtKey, svc, makeModifyFIMEndpoint(svc)),
 
-		// Osquery endpoints
-		EnrollAgent:                   makeEnrollAgentEndpoint(svc),
+
+	}
+}
+
+// MakeKolideServerEndpoints creates the Kolide API endpoints.
+func MakeOsqueryServerEndpoints(svc kolide.Service, jwtKey string) OsqueryEndpoints {
+	return OsqueryEndpoints{
+			// Osquery endpoints
+	  EnrollAgent:                   makeEnrollAgentEndpoint(svc),
 		GetClientConfig:               authenticatedHost(svc, makeGetClientConfigEndpoint(svc)),
 		GetDistributedQueries:         authenticatedHost(svc, makeGetDistributedQueriesEndpoint(svc)),
 		SubmitDistributedQueryResults: authenticatedHost(svc, makeSubmitDistributedQueryResultsEndpoint(svc)),
@@ -248,11 +259,6 @@ type kolideHandlers struct {
 	ApplyPackSpecs                        http.Handler
 	GetPackSpecs                          http.Handler
 	GetPackSpec                           http.Handler
-	EnrollAgent                           http.Handler
-	GetClientConfig                       http.Handler
-	GetDistributedQueries                 http.Handler
-	SubmitDistributedQueryResults         http.Handler
-	SubmitLogs                            http.Handler
 	CreateLabel                           http.Handler
 	ModifyLabel                           http.Handler
 	GetLabel                              http.Handler
@@ -279,6 +285,14 @@ type kolideHandlers struct {
 	SettingsSSO                           http.Handler
 	ModifyFIM                             http.Handler
 	GetFIM                                http.Handler
+}
+
+type osqueryHandlers struct {
+	EnrollAgent                           http.Handler
+	GetClientConfig                       http.Handler
+	GetDistributedQueries                 http.Handler
+  SubmitDistributedQueryResults         http.Handler
+	SubmitLogs                            http.Handler
 }
 
 func makeKolideKitHandlers(e KolideEndpoints, opts []kithttp.ServerOption) *kolideHandlers {
@@ -336,11 +350,6 @@ func makeKolideKitHandlers(e KolideEndpoints, opts []kithttp.ServerOption) *koli
 		ApplyPackSpecs:                        newServer(e.ApplyPackSpecs, decodeApplyPackSpecsRequest),
 		GetPackSpecs:                          newServer(e.GetPackSpecs, decodeNoParamsRequest),
 		GetPackSpec:                           newServer(e.GetPackSpec, decodeGetGenericSpecRequest),
-		EnrollAgent:                           newServer(e.EnrollAgent, decodeEnrollAgentRequest),
-		GetClientConfig:                       newServer(e.GetClientConfig, decodeGetClientConfigRequest),
-		GetDistributedQueries:                 newServer(e.GetDistributedQueries, decodeGetDistributedQueriesRequest),
-		SubmitDistributedQueryResults:         newServer(e.SubmitDistributedQueryResults, decodeSubmitDistributedQueryResultsRequest),
-		SubmitLogs:                            newServer(e.SubmitLogs, decodeSubmitLogsRequest),
 		CreateLabel:                           newServer(e.CreateLabel, decodeCreateLabelRequest),
 		ModifyLabel:                           newServer(e.ModifyLabel, decodeModifyLabelRequest),
 		GetLabel:                              newServer(e.GetLabel, decodeGetLabelRequest),
@@ -370,8 +379,20 @@ func makeKolideKitHandlers(e KolideEndpoints, opts []kithttp.ServerOption) *koli
 	}
 }
 
+func makeOsqueryKitHandlers(e OsqueryEndpoints, opts []kithttp.ServerOption) *osqueryHandlers {
+	newServer := func(e endpoint.Endpoint, decodeFn kithttp.DecodeRequestFunc) http.Handler {
+		return kithttp.NewServer(e, decodeFn, encodeResponse, opts...)
+	}
+	return &osqueryHandlers{
+    EnrollAgent:                           newServer(e.EnrollAgent, decodeEnrollAgentRequest),
+		GetClientConfig:                       newServer(e.GetClientConfig, decodeGetClientConfigRequest),
+		GetDistributedQueries:                 newServer(e.GetDistributedQueries, decodeGetDistributedQueriesRequest),
+		SubmitDistributedQueryResults:         newServer(e.SubmitDistributedQueryResults, decodeSubmitDistributedQueryResultsRequest),
+		SubmitLogs:                            newServer(e.SubmitLogs, decodeSubmitLogsRequest),
+	}
+}
 // MakeHandler creates an HTTP handler for the Kolide server endpoints.
-func MakeHandler(svc kolide.Service, jwtKey string, logger kitlog.Logger) http.Handler {
+func MakeKolideHandler(svc kolide.Service, jwtKey string, logger kitlog.Logger) http.Handler {
 	kolideAPIOptions := []kithttp.ServerOption{
 		kithttp.ServerBefore(
 			kithttp.PopulateRequestContext, // populate the request context with common fields
@@ -394,6 +415,30 @@ func MakeHandler(svc kolide.Service, jwtKey string, logger kitlog.Logger) http.H
 	r.PathPrefix("/api/v1/kolide/results/").
 		Handler(makeStreamDistributedQueryCampaignResultsHandler(svc, jwtKey, logger)).
 		Name("distributed_query_results")
+
+	return r
+}
+
+// MakeHandler creates an HTTP handler for the Osquery server endpoints.
+func MakeOsqueryHandler(svc kolide.Service, jwtKey string, logger kitlog.Logger) http.Handler {
+	osqueryAPIOptions := []kithttp.ServerOption{
+		kithttp.ServerBefore(
+			kithttp.PopulateRequestContext, // populate the request context with common fields
+			setRequestsContexts(svc, jwtKey),
+		),
+		kithttp.ServerErrorLogger(logger),
+		kithttp.ServerErrorEncoder(encodeError),
+		kithttp.ServerAfter(
+			kithttp.SetContentType("application/json; charset=utf-8"),
+		),
+	}
+
+	osqueryEndpoints := MakeOsqueryServerEndpoints(svc, jwtKey)
+	osqueryHandlers := makeOsqueryKitHandlers(osqueryEndpoints, osqueryAPIOptions)
+
+	r := mux.NewRouter()
+	attachOsqueryAPIRoutes(r, osqueryHandlers)
+	addMetrics(r)
 
 	return r
 }
@@ -495,7 +540,9 @@ func attachKolideAPIRoutes(r *mux.Router, h *kolideHandlers) {
 	r.Handle("/api/v1/kolide/spec/osquery_options", h.GetOsqueryOptionsSpec).Methods("GET").Name("get_osquery_options_spec")
 
 	r.Handle("/api/v1/kolide/targets", h.SearchTargets).Methods("POST").Name("search_targets")
+}
 
+func attachOsqueryAPIRoutes(r *mux.Router, h *osqueryHandlers) {
 	r.Handle("/api/v1/osquery/enroll", h.EnrollAgent).Methods("POST").Name("enroll_agent")
 	r.Handle("/api/v1/osquery/config", h.GetClientConfig).Methods("POST").Name("get_client_config")
 	r.Handle("/api/v1/osquery/distributed/read", h.GetDistributedQueries).Methods("POST").Name("get_distributed_queries")

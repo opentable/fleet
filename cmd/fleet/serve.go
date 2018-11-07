@@ -164,10 +164,11 @@ the way that the Fleet server works.
 
 			httpLogger := kitlog.With(logger, "component", "http")
 
-			var apiHandler, frontendHandler http.Handler
+			var apiKolideHandler, apiOsqueryHandler, frontendHandler http.Handler
 			{
 				frontendHandler = prometheus.InstrumentHandler("get_frontend", service.ServeFrontend(httpLogger))
-				apiHandler = service.MakeHandler(svc, config.Auth.JwtKey, httpLogger)
+				apiKolideHandler = service.MakeKolideHandler(svc, config.Auth.JwtKey, httpLogger)
+				apiOsqueryHandler = service.MakeOsqueryHandler(svc, config.Auth.JwtKey, httpLogger)
 
 				setupRequired, err := service.RequireSetup(svc)
 				if err != nil {
@@ -177,7 +178,7 @@ the way that the Fleet server works.
 				// By performing the same check inside main, we can make server startups
 				// more efficient after the first startup.
 				if setupRequired {
-					apiHandler = service.WithSetup(svc, logger, apiHandler)
+					apiKolideHandler = service.WithSetup(svc, logger, apiKolideHandler)
 					frontendHandler = service.RedirectLoginToSetup(svc, logger, frontendHandler)
 				} else {
 					frontendHandler = service.RedirectSetupToLogin(svc, logger, frontendHandler)
@@ -211,8 +212,12 @@ the way that the Fleet server works.
 			r.Handle("/version", prometheus.InstrumentHandler("version", version.Handler()))
 			r.Handle("/assets/", prometheus.InstrumentHandler("static_assets", service.ServeStaticAssets("/assets/")))
 			r.Handle("/metrics", prometheus.InstrumentHandler("metrics", promhttp.Handler()))
-			r.Handle("/api/", apiHandler)
+			r.Handle("/api/", apiKolideHandler)
 			r.Handle("/", frontendHandler)
+
+
+			ext := http.NewServeMux()
+			ext.Handle("/api/", apiOsqueryHandler)
 
 			if path, ok := os.LookupEnv("KOLIDE_TEST_PAGE_PATH"); ok {
 				// test that we can load this
@@ -244,13 +249,24 @@ the way that the Fleet server works.
 
 			srv := &http.Server{
 				Addr:              config.Server.Address,
-				Handler:           launcher.Handler(r),
+				Handler:           r,
 				ReadTimeout:       25 * time.Second,
 				WriteTimeout:      40 * time.Second,
 				ReadHeaderTimeout: 5 * time.Second,
 				IdleTimeout:       5 * time.Minute,
 				MaxHeaderBytes:    1 << 18, // 0.25 MB (262144 bytes)
 			}
+
+			fsrv := &http.Server{
+				Addr:              config.Server.ExtAddress,
+				Handler:           launcher.Handler(ext),
+				ReadTimeout:       25 * time.Second,
+				WriteTimeout:      40 * time.Second,
+				ReadHeaderTimeout: 5 * time.Second,
+				IdleTimeout:       5 * time.Minute,
+				MaxHeaderBytes:    1 << 18, // 0.25 MB (262144 bytes)
+			}
+
 			errs := make(chan error, 2)
 			go func() {
 				if !config.Server.TLS {
@@ -266,6 +282,19 @@ the way that the Fleet server works.
 				}
 			}()
 			go func() {
+				if !config.Server.TLS {
+					logger.Log("transport", "http", "address", config.Server.ExtAddress, "msg", "listening")
+					errs <- fsrv.ListenAndServe()
+				} else {
+					logger.Log("transport", "https", "address", config.Server.ExtAddress, "msg", "listening")
+					srv.TLSConfig = getTLSConfig(config.Server.TLSProfile)
+					errs <- fsrv.ListenAndServeTLS(
+						config.Server.Cert,
+						config.Server.Key,
+					)
+				}
+			}()
+			go func() {
 				sig := make(chan os.Signal, 1)
 				signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 				<-sig //block on signal
@@ -273,6 +302,7 @@ the way that the Fleet server works.
 				defer cancel()
 				errs <- func() error {
 					launcher.GracefulStop()
+					fsrv.Shutdown(ctx)
 					return srv.Shutdown(ctx)
 				}()
 			}()
