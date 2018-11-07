@@ -45,6 +45,7 @@ const (
 // ServerConfig defines configs related to the Kolide server
 type ServerConfig struct {
 	Address    string
+	ExtAddress string
 	Cert       string
 	Key        string
 	TLS        bool
@@ -135,6 +136,8 @@ func (man Manager) addConfigs() {
 	// Server
 	man.addConfigString("server.address", "0.0.0.0:8080",
 		"Kolide server address (host:port)")
+	man.addConfigString("server.external_address", "0.0.0.0:8888",
+		"Kolide external address (host:port)")
 	man.addConfigString("server.cert", "./tools/osquery/kolide.crt",
 		"Kolide TLS certificate path")
 	man.addConfigString("server.key", "./tools/osquery/kolide.key",
@@ -213,6 +216,7 @@ func (man Manager) LoadConfig() KolideConfig {
 		},
 		Server: ServerConfig{
 			Address:    man.getConfigString("server.address"),
+			ExtAddress: man.getConfigString("server.external_address"),
 			Cert:       man.getConfigString("server.cert"),
 			Key:        man.getConfigString("server.key"),
 			TLS:        man.getConfigBool("server.tls"),
