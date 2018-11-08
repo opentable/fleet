@@ -134,9 +134,9 @@ func (man Manager) addConfigs() {
 		"Redis server password (prefer env variable for security)")
 
 	// Server
-	man.addConfigString("server.address", "0.0.0.0:8080",
+	man.addConfigString("server.address", "0.0.0.0:8888",
 		"Kolide server address (host:port)")
-	man.addConfigString("server.external_address", "0.0.0.0:8888",
+	man.addConfigString("server.external_address", "0.0.0.0:8080",
 		"Kolide external address (host:port)")
 	man.addConfigString("server.cert", "./tools/osquery/kolide.crt",
 		"Kolide TLS certificate path")
